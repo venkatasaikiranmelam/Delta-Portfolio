@@ -1,0 +1,497 @@
+---
+title: "Marketing analytics Portfolio - Delta Airlines"
+author: "Venkata Saikiran Melam,"
+date: "2023-04-16"
+output: html_document
+---
+
+
+
+
+
+
+
+
+```{r}
+
+#install.packages(c("dplyr", "stringr", "readr", "tidytext"))
+library(dplyr)
+library(stringr)
+library(readr)
+library(tidytext)
+library(vader)
+setwd("C://sk//2nd sem//1.Marketing analytics//Data//m5")
+getwd()
+delta_data <- read_csv('delta_airline.csv')
+
+
+```
+
+```{r}
+head(delta_data)
+```
+
+
+## R Markdown
+##Sentiment Analysis
+## Calculate scores for all tweets
+
+```{r}
+vscores <- delta_data$reviews %>% lapply(get_vader)
+```
+
+
+
+```{r}
+delta_df <- delta_data %>% mutate(
+  compound = vscores %>% sapply(function(v) { as.numeric(v["compound"]) }),
+  pos = vscores %>% sapply(function(v) { as.numeric(v["pos"]) }),
+  neu = vscores %>% sapply(function(v) { as.numeric(v["neu"]) }),
+  neg = vscores %>% sapply(function(v) { as.numeric(v["neg"]) }),
+)
+delta_df
+```
+######################################################### sentiment analysis ######################################################################
+## Find Top 10 positive reviews
+```{r}
+delta_df %>% arrange(desc(compound)) %>% head(20)
+```
+
+## Find Top 10 negative reviews
+```{r}
+delta_df %>% arrange(compound) %>% head(20)
+```
+
+
+
+```{r}
+library(ggplot2)
+ggplot(delta_df, aes(x = pos, y = neg, color = neu)) +
+  geom_point(alpha = 0.5, size = 2) +
+  labs(title = "Scatter Plot of Positive, Negative, and Neutral Sentiment Scores",
+       x = "Positive",
+       y = "Negative",
+       color = "Neutral") +
+  theme_minimal()
+
+```
+
+
+
+
+```{r}
+
+library(tidyverse)
+
+delta_df_long <- delta_df %>%
+  mutate(id = row_number()) %>%
+  select(id, pos, neu, neg) %>%
+  gather(key = "sentiment", value = "score", -id)
+
+delta_df_long
+```
+
+
+```{r}
+ggplot(delta_df_long, aes(x = id, y = score, fill = sentiment)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Bar Plot of Positive, Negative, and Neutral Sentiment Scores",
+       x = "Review Index",
+       y = "Sentiment Score",
+       fill = "Sentiment") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank())
+```
+
+
+```{r}
+top_20 <- delta_df %>% arrange(desc(compound)) %>% head(20)
+bottom_20 <- delta_df %>% arrange(compound) %>% head(20)
+```
+
+
+
+
+```{r}
+top_20_long <- top_20 %>%
+  mutate(id = row_number()) %>%
+  select(id, pos, neu, neg) %>%
+  gather(key = "sentiment", value = "score", -id)
+
+bottom_20_long <- bottom_20 %>%
+  mutate(id = row_number()) %>%
+  select(id, pos, neu, neg) %>%
+  gather(key = "sentiment", value = "score", -id)
+
+
+```
+
+
+
+
+```{r}
+
+# Bar plot for top 20 reviews
+ggplot(top_20_long, aes(x = id, y = score, fill = sentiment)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Top 20 Reviews - Sentiment Scores",
+       x = "Review Index",
+       y = "Sentiment Score",
+       fill = "Sentiment") +
+  theme_minimal()
+
+# Bar plot for bottom 20 reviews
+ggplot(bottom_20_long, aes(x = id, y = score, fill = sentiment)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Bottom 20 Reviews - Sentiment Scores",
+       x = "Review Index",
+       y = "Sentiment Score",
+       fill = "Sentiment") +
+  theme_minimal()
+
+```
+```{r}
+
+
+delta_df <- delta_df %>%
+  mutate(sentiment_category = case_when(
+    compound > 0.05 ~ "Positive",
+    compound < -0.05 ~ "Negative",
+    TRUE ~ "Neutral"
+  ))
+
+```
+
+
+```{r}
+sentiment_counts <- delta_df %>%
+  group_by(sentiment_category) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+
+```
+
+
+
+
+```{r}
+ggplot(sentiment_counts, aes(x = "", y = percentage, fill = sentiment_category)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  labs(title = "Proportion of Positive, Negative, and Neutral Reviews",
+       fill = "Sentiment") +
+  theme_void() +
+  theme(legend.position = "right")
+
+
+```
+
+
+
+
+
+
+
+########################################################################  LDA   #############################################################
+
+
+
+
+
+```{r}
+#install.packages(c("tidytext", "tidyverse", "topicmodels", "tm"))
+library(tidytext)
+library(tidyverse)
+library(topicmodels)
+library(tm)
+library(dplyr)
+library(magrittr)
+
+```
+
+```{r}
+
+delta_df$row_num <- seq_len(nrow(delta_df))
+delta_df$reviews <- delta_df$reviews %>% str_remove_all("https://t.co/\\w+")
+```
+
+
+```{r}
+stop_words <- c(stopwords(), "delta", "airline", "flight","verified","first","get")
+
+```
+
+
+
+```{r}
+delta_tokens <- delta_df %>%
+  unnest_tokens(input = reviews, output = word) %>%
+  filter(nchar(word) >= 3)
+delta_tokens <- delta_tokens %>%
+  semi_join(data.frame(word = setdiff(unique(delta_tokens$word), stop_words)), by = "word")
+
+```
+
+```{r}
+dtm <- delta_tokens %>%
+  count(row_num, word) %>%
+  cast_dtm(document = row_num, term = word, value = n)
+```
+
+```{r}
+delta_lda <- LDA(dtm, k = 5, control = list(seed = 25))
+delta_topics <- tidy(delta_lda, matrix = "beta")
+```
+
+```{r}
+top_terms <- delta_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 20) %>% 
+  ungroup() %>%
+  arrange(topic, -beta)
+```
+
+```{r}
+# Sort the top_terms by topic and beta in descending order
+top_terms <- top_terms %>%
+  arrange(topic, desc(beta))
+
+# Print the top_terms by topic
+print(top_terms)
+```
+
+
+```{r}
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  theme_minimal() +
+  ggtitle("Top terms by topic") +
+  facet_wrap(~topic, scales = "free") +
+  scale_y_reordered()
+```
+
+
+
+ 
+##############################################################   word cloud  ##########################################################################
+```{r}
+# library
+library(wordcloud)
+```
+
+
+```{r}
+# View summary of data
+summary(delta_df)
+```
+
+
+```{r}
+# Tokenize the text
+delta_tokens <- delta_df %>%
+  unnest_tokens(input = reviews, output = word) %>%
+  filter(nchar(word) >= 3)
+```
+
+
+```{r}
+# Add custom stop words
+custom_stop_words <- c(stopwords(), "delta", "airline", "flight", "flightled", "flightleds", "travel", "passenger", "airlines","verified","get")
+delta_tokens <- delta_tokens %>%
+  anti_join(data.frame(word = custom_stop_words), by = "word")
+```
+
+
+```{r}
+# Count tokens
+tokens_count <- delta_tokens %>% count(word)
+```
+
+
+
+
+
+
+
+```{r}
+set.seed(25)
+wordcloud(words = tokens_count$word, freq = tokens_count$n, min.freq = 1, max.words = 150, random.order = FALSE, colors = brewer.pal(8, "Dark2"), scale = c(2, 0.5))
+
+```
+
+
+
+
+
+
+```{r}
+delta_df
+```
+
+```{r}
+library(dplyr)
+
+
+# Create a new dataframe with 'routes' as a factor variable
+new_delta_df <- delta_df %>%
+  mutate(routes_factor = as.factor(routes))
+
+# Fit a linear regression model using 'neg' as the dependent variable
+model <- lm(neg ~ routes_factor, data = new_delta_df)
+
+# Display the summary of the model
+summary(model)
+
+
+```
+
+
+
+```{r}
+unique_routes <- length(unique(delta_df$routes))
+print(unique_routes)
+
+```
+
+```{r}
+# Extract the coefficients, standard errors, and p-values from the model summary
+coef_table <- summary(model)$coefficients
+
+# Create a dataframe containing the routes, coefficients, and p-values
+coef_df <- data.frame(
+  route = rownames(coef_table)[-1],  # Remove the intercept row
+  coef = coef_table[-1, 1],           # Remove the intercept row
+  p_value = coef_table[-1, 4]         # Remove the intercept row
+)
+
+# Filter routes with negative coefficients and p-value < 0.4
+negative_routes <- coef_df %>% 
+  filter(coef < 0, p_value < 0.3)
+
+# Display the filtered routes
+print(negative_routes)
+
+
+```
+
+
+
+
+
+```{r}
+colnames(delta_df)
+```
+
+
+```{r}
+
+library(glmnet)
+
+
+```
+
+
+
+
+```{r}
+# Load required package
+library(dplyr)
+
+# Calculate mean negative score and star rating for each route
+route_summary <- delta_df %>%
+  group_by(routes) %>%
+  summarise(mean_neg_score = mean(neg), mean_star_rating = mean(`star rating`))
+
+
+```
+
+```{r}
+# Bottom 20 routes with the most negative scores
+bottom_20_neg_scores <- route_summary %>%
+  arrange(desc(mean_neg_score)) %>%
+  head(20)
+
+```
+
+```{r}
+# Bottom 20 routes with the lowest star ratings
+bottom_20_star_ratings <- route_summary %>%
+  arrange(mean_star_rating) %>%
+  head(20)
+
+```
+
+
+```{r}
+# Find common routes between the two lists
+common_routes <- intersect(bottom_20_neg_scores$routes, bottom_20_star_ratings$routes)
+
+```
+
+```{r}
+# List bottom 20 routes with the most negative scores
+print(bottom_20_neg_scores)
+
+
+```
+
+
+```{r}
+summary(delta_df)
+
+
+```
+
+
+
+
+
+
+```{r}
+
+head(delta_df)
+```
+
+```{r}
+
+
+neg_over_time <- delta_df%>%
+  select(date) %>%
+  mutate(neg = delta_df$neg)
+
+
+```
+
+
+
+```{r}
+
+neg_over_time$date <- as.Date(neg_over_time$date, "%dth %B %Y")
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+library(ggplot2)
+
+neg_over_time <- na.omit(neg_over_time)
+
+ggplot(neg_over_time, aes(x = date, y = neg)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Delta Airlines Negative Sentiment Over Time", x = "Date", y = "Negative Sentiment Score")
+
+```
+
+
+
+
